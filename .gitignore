@@ -1,0 +1,22 @@
+# .gcloudignore
+.gcloudignore
+
+# Ignore Git history
+.git/
+
+# Ignore Python specific files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+.env
+
+# Ignore IDE and editor folders
+.idea/
+.vscode/
+
+*.db
+
+data/

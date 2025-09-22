@@ -1,0 +1,133 @@
+# --- 1. The Deployment for your Agent ---
+# It now includes a securityContext and the service addresses.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shopping-agent
+  namespace: microservices-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shopping-agent
+  template:
+    metadata:
+      labels:
+        app: shopping-agent
+    spec:
+      securityContext:
+        fsGroup: 1001
+      containers:
+      - name: agent
+        image: us-central1-docker.pkg.dev/ai-micro-gke-1758525543/adk-repo/adk-agent:latest # IMPORTANT: Use your image path
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: google-api-secret
+              key: apiKey
+        # --- FIX: ADDED SERVICE ADDRESSES ---
+        # These tell your agent how to find the other microservices using Kubernetes DNS.
+        - name: PRODUCT_CATALOG_SERVICE_ADDR
+          value: "productcatalogservice:3550"
+        - name: CHECKOUT_SERVICE_ADDR
+          value: "checkoutservice:5050"
+        volumeMounts:
+        - name: session-storage
+          mountPath: /data
+        readinessProbe:
+          initialDelaySeconds: 15
+          httpGet:
+            path: "/_healthz"
+            port: 8080
+        livenessProbe:
+          initialDelaySeconds: 15
+          httpGet:
+            path: "/_healthz"
+            port: 8080
+      volumes:
+      - name: session-storage
+        persistentVolumeClaim:
+          claimName: agent-session-pvc
+---
+# --- 2. The PersistentVolumeClaim (PVC) ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-session-pvc
+  namespace: microservices-demo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+# --- 3. The BackendConfig for GKE Health Checks ---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: agent-health-check-config
+  namespace: microservices-demo
+spec:
+  healthCheck:
+    checkIntervalSec: 15
+    timeoutSec: 15
+    healthyThreshold: 1
+    unhealthyThreshold: 2
+    type: HTTP
+    requestPath: /_healthz
+    port: 8080
+---
+# --- 4. The Service to expose the agent internally ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shopping-agent-service
+  namespace: microservices-demo
+  annotations:
+    cloud.google.com/backend-config: '{"ports": {"80":"agent-health-check-config"}}'
+spec:
+  type: ClusterIP
+  selector:
+    app: shopping-agent
+  ports:
+  - port: 80
+    targetPort: 8080
+---
+# --- 5. The Ingress and Certificate for the subdomain ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agent-ingress
+  namespace: microservices-demo
+  annotations:
+    kubernetes.io.ingress.class: "gce"
+    networking.gke.io/managed-certificates: "agent-cert"
+spec:
+  rules:
+  - host: "agent.boutique.fatutaf.com"
+    http:
+      paths:
+      - path: /*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: shopping-agent-service
+            port:
+              number: 80
+---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: agent-cert
+  namespace: microservices-demo
+spec:
+  domains:
+    - "agent.boutique.fatutaf.com"
+
